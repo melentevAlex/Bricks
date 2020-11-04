@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Configuration;
+using System.Data;
 using System.Data.SqlClient;
 using System.Linq;
 using System.Text;
@@ -13,7 +14,7 @@ namespace Bricks
         static void Main(string[] args)
         {
             GetValue();
-            Console.WriteLine("Программа завершила выполнение");
+            Console.WriteLine("Программа успешно завершила выполнение");
         }
 
         private static void GetValue()
@@ -22,46 +23,45 @@ namespace Bricks
             SqlConnection con = new SqlConnection(connectionString);
             con.Open();
 
+            //
+            // Это я потом удалю
             string maxIdQuery = "SELECT Max([id]) FROM[SecondarySalesRussia_TQ].[dbo].[Personnel_District]";
 
             SqlCommand cmdMax = new SqlCommand(maxIdQuery, con);
             int maxIdProfUnicId = (int)cmdMax.ExecuteScalar();
+            //
 
-            string firstValueQuery = "SELECT Top(1) id FROM [SecondarySalesRussia_TQ].[dbo].[Personnel_District] where DateIn <= GETDATE() and DateOut >= GETDATE()";
-            SqlCommand cmdFirstValue = new SqlCommand(firstValueQuery, con);
-            int firstVal = (int)cmdFirstValue.ExecuteScalar();
+
+
+
+
+            string arrProfUnicIdQuery = $@"SELECT Distinct [ProfUniqID]
+                                  FROM [SecondarySalesRussia_TQ].[dbo].[Personnel_District]
+                                  where DateIn <= GETDATE() and DateOut >= GETDATE()";
+            SqlCommand cmdArr = new SqlCommand(arrProfUnicIdQuery, con);
+
+            SqlDataAdapter adapter = new SqlDataAdapter(arrProfUnicIdQuery, con);
+
+            DataSet ds = new DataSet("tables");
+
+            adapter.Fill(ds, "Personnel_District");
+
+            DataTable dataTable;
+            dataTable = ds.Tables["Personnel_District"];
 
             List<int> ProfUnicIdArr = new List<int>();  // Уникальные ProfUnicID, которые соотвествуют дате
 
-            for (int i = firstVal; i <= maxIdProfUnicId; i++)
+            foreach (DataRow drCurrent in dataTable.Rows)
             {
-                string arrQuery = $@"SELECT Distinct [ProfUniqID]
-                                  FROM [SecondarySalesRussia_TQ].[dbo].[Personnel_District]
-                                  where DateIn <= GETDATE() and DateOut >= GETDATE() and id = {i}";
-                SqlCommand cmdArr = new SqlCommand(arrQuery, con);
-                int ProfUnicIdToArr = 0;
-
-
-                try
-                {
-                    ProfUnicIdToArr = (int)cmdArr.ExecuteScalar();
-                    if (!ProfUnicIdArr.Contains(ProfUnicIdToArr))
-                    {
-                        ProfUnicIdArr.Add(ProfUnicIdToArr); // получили актуальные должности
-                    }
-                }
-                catch (Exception) { } // there is not such id 
-
+                ProfUnicIdArr.Add(Convert.ToInt32(drCurrent["ProfUniqID"]));
             }
-            ProfUnicIdArr.Add(14573);
-            //ProfUnicIdArr.Add(14578);
 
             string pos = String.Empty;
             List<int> DivisionIdArr = new List<int>();
-            // Определим подразделения divisionID чтобы понять входить ли эта должность в подразделение 3213
+            //Определим подразделения divisionID чтобы понять входить ли эта должность в подразделение 3213
 
 
-            for (int j = 0; j < ProfUnicIdArr.Count(); j++)
+            for (int j = 1088; j < ProfUnicIdArr.Count(); j++)
             {
                 int DiviToArr = 0;
                 int parentDiToArr = 0;
@@ -71,27 +71,40 @@ namespace Bricks
                                                   FROM[Applications].[dbo].[Staff_Profession]
                                                   where[ProfessionID] = {ProfId}";
                 SqlCommand cmdArrDiv = new SqlCommand(divisionIdQuery, con);
-                DiviToArr = (int)cmdArrDiv.ExecuteScalar();
 
-                DivisionIdAndParent.Add(DiviToArr);
-
-                while (parentDiToArr != 1300)
+                try
                 {
-                    // нашли divisionId нужно найти все его parentDivisionId
-                    string parentDiv = $@"SELECT Distinct [ParentDivisionID]
-                                    FROM [Applications].[dbo].[Staff_Division]
-                                    where [DivisionID] = {DiviToArr}
-                                    and DateIn <= GETDATE() and DateOut >= GETDATE()";
-                    SqlCommand cmdparentDiv = new SqlCommand(parentDiv, con);
-                    try
+                    DiviToArr = (int)cmdArrDiv.ExecuteScalar();
+                    DivisionIdAndParent.Add(DiviToArr);
+
+                    while (parentDiToArr != 1300)
                     {
-                        parentDiToArr = (int)cmdparentDiv.ExecuteScalar(); // нашли первый parentId ищем дальше
+                        // нашли divisionId нужно найти все его parentDivisionId
+                        string parentDiv = $@"SELECT Distinct [ParentDivisionID]
+                                        FROM [Applications].[dbo].[Staff_Division]
+                                        where [DivisionID] = {DiviToArr}
+                                        and DateIn <= GETDATE() and DateOut >= GETDATE()";
+                        SqlCommand cmdparentDiv = new SqlCommand(parentDiv, con);
+                        try
+                        {
+                            parentDiToArr = (int)cmdparentDiv.ExecuteScalar(); // нашли первый parentId ищем дальше
+
+                            DivisionIdAndParent.Add(parentDiToArr);
+                            DiviToArr = parentDiToArr;
+                            if (parentDiToArr == 1001)
+                            {
+                                break;
+                            }
+                        }
+                        catch (Exception) { break; }
 
                     }
-                    catch (Exception) { }
-                    DivisionIdAndParent.Add(parentDiToArr);
-                    DiviToArr = parentDiToArr;
                 }
+                catch (Exception) { }
+
+
+
+
                 int secSalDistrictId = 0;
                 // Содержит ли DivisionIdAndParent 3213
                 if (DivisionIdAndParent.Contains(3213))
@@ -109,31 +122,46 @@ namespace Bricks
                     {   // сделать подзапрос чтобы получить [SecondarySalesDistrictID]
                         List<int> secondarySalesDistrictId = new List<int>();
                         int IdFromPersDist = 0;
-                        for (int i = 1; i <= maxIdProfUnicId; i++) // maxIdProfUnicId
-                        {
-                            IdFromPersDist = i;
-                            string subquery = $@"SELECT [SecondarySalesDistrictID]
+
+                        string subquery = $@"SELECT [SecondarySalesDistrictID]
                                       FROM [SecondarySalesRussia_TQ].[dbo].[Personnel_District]
                                       inner join [SecondarySalesRussia_TQ].[dbo].[Ref_SecondarySalesDistrict]
                                       ON [Personnel_District].SecondarySalesDistrictID = [Ref_SecondarySalesDistrict].id
-                                      where [ProfUniqID] = {ProfId} and DateIn <= GETDATE() and DateOut >= GETDATE() and [Personnel_District].id = {i}
+                                      where [ProfUniqID] = {ProfId} and DateIn <= GETDATE() and DateOut >= GETDATE()
                                       and [LevelValue] < 4";
-                            SqlCommand cmdsubquery = new SqlCommand(subquery, con);
 
-                            try
+                        SqlDataAdapter adapter2 = new SqlDataAdapter(subquery, con);
+
+                        DataSet ds2 = new DataSet();
+
+                        adapter2.Fill(ds2, "SecondarySalesDistrictID");
+
+                        DataTable dataTable2;
+                        dataTable2 = ds2.Tables["SecondarySalesDistrictID"];
+
+                        // пройдёмся по дататэйбл
+                        if (dataTable2 != null)
+                        {
+                            foreach (DataRow drCurrent2 in dataTable2.Rows)
                             {
-                                secSalDistrictId = (int)cmdsubquery.ExecuteScalar();
-                                if (!secondarySalesDistrictId.Contains(secSalDistrictId))
+
+                                int secSalDistrictIda = Convert.ToInt32(drCurrent2["SecondarySalesDistrictID"]);
+
+                                if (!secondarySalesDistrictId.Contains(secSalDistrictIda))
                                 {
-                                    secondarySalesDistrictId.Add(secSalDistrictId); // Получаем значения территории у данной должности где levelValue < 4 их может быть несколько
+                                    secondarySalesDistrictId.Add(secSalDistrictIda);
+                                    //
+                                    //
+                                    // тут ок
                                 }
-                                // имея эти знаяения найдём levelValue
                             }
-                            catch (Exception) { }
                         }
+                        //
+                        //
+                        //
 
                         for (int i = 0; i < secondarySalesDistrictId.Count; i++)
-                         {
+                        {
                             // имея эти знаяения найдём levelValue
 
                             string levelValQuery = $@"SELECT [LevelValue]
@@ -166,41 +194,40 @@ namespace Bricks
 
                                     // Получаем дочерние записи от secondarySalesDistrictId.ElementAt(i) то есть от 477
                                     // Для этого нужно взять максимальное число из таблицы Ref_SecondarySalesDistrict
-                                    string maxIdSecQuery = $@"SELECT MAX([id])
-                                            FROM[SecondarySalesRussia].[dbo].[Ref_SecondarySalesDistrict]";
-                                    SqlCommand cmdmaxIdSec = new SqlCommand(maxIdSecQuery, con);
-                                    int maxIdSecSal = (int)cmdmaxIdSec.ExecuteScalar();
+
+                                    string childQuery = $@"SELECT [id]
+                                      FROM [SecondarySalesRussia_TQ].[dbo].[Ref_SecondarySalesDistrict]
+                                      where [ParentID] = {secondarySalesDistrictId.ElementAt(i)}";
+
+                                    SqlDataAdapter adapter3 = new SqlDataAdapter(childQuery, con);
+                                    DataSet ds3 = new DataSet("tables");
+                                    adapter3.Fill(ds3, "id");
+                                    DataTable dataTable3;
+                                    dataTable3 = ds3.Tables["id"];
 
                                     List<int> childList = new List<int>();
-                                    int maxIdPers = 0;
-                                    for (int k = 1; k < maxIdSecSal; k++) // maxIdSecSal
-                                    {
-                                        string childIdQuery = $@"SELECT [id]
-                                                    FROM [SecondarySalesRussia_TQ].[dbo].[Ref_SecondarySalesDistrict]
-                                                    where ParentID = {secondarySalesDistrictId.ElementAt(i)}
-                                                    and IsActive = 1 and CodeIMS is not null
-	                                                and id = {k}";
-                                        SqlCommand cmdChildId = new SqlCommand(childIdQuery, con);
 
-                                        // вычислим максимальное значение personnel_District
-                                        string maxIdPersDis = $@"SELECT max([id])
-                                                          FROM [SecondarySalesRussia_TQ].[dbo].[Personnel_District]";
-                                        SqlCommand cmdmaxIdPersDis = new SqlCommand(maxIdPersDis, con);
-                                        maxIdPers = (int)cmdmaxIdPersDis.ExecuteScalar();
-                                        
-                                        try
-                                        {
-                                            int ChildId = (int)cmdChildId.ExecuteScalar();
-                                            childList.Add(ChildId);
-                                        }
-                                        catch (Exception) { }
+
+                                    foreach (DataRow drCurrent3 in dataTable3.Rows)
+                                    {
+                                        childList.Add(Convert.ToInt32(drCurrent3["id"]));
                                     }
-                                        try
-                                        {
+
+
+                                    // вычислим максимальное значение personnel_District
+                                    string maxIdPersDis = $@"SELECT max([id])
+                                                          FROM [SecondarySalesRussia_TQ].[dbo].[Personnel_District]";
+                                    SqlCommand cmdmaxIdPersDis = new SqlCommand(maxIdPersDis, con);
+
+                                    int maxIdPers = 0;
+                                    maxIdPers = (int)cmdmaxIdPersDis.ExecuteScalar();
+                                    
+                                    try
+                                    {
                                         int autoIncrement = 1;
                                         for (int y = 0; y < childList.Count; y++)
-                                            {
-                                                string insertQuery = $@"insert into [SecondarySalesRussia_TQ].[dbo].[Personnel_District]
+                                        {
+                                            string insertQuery = $@"insert into [SecondarySalesRussia_TQ].[dbo].[Personnel_District]
 	                                                    ([id]
                                                           ,[ProfUniqID]
                                                           ,[SecondarySalesDistrictID]
@@ -212,16 +239,16 @@ namespace Bricks
                                                           ,[ChangeDate]) 
 	                                                      Values
 	                                                      ({maxIdPers + autoIncrement}, {ProfId}, {childList.ElementAt(y)}, '2020-10-21', '2100-01-01', 1, 9954, GETDATE(), GETDATE())";
-                                                SqlCommand cmdInsert = new SqlCommand(insertQuery, con);
-                                                try
-                                                {
-                                                    cmdInsert.ExecuteNonQuery();
-                                                }
-                                                catch (Exception) { }
-                                                autoIncrement++;
+                                            SqlCommand cmdInsert = new SqlCommand(insertQuery, con);
+                                            try
+                                            {
+                                                cmdInsert.ExecuteNonQuery();
                                             }
+                                            catch (Exception) { }
+                                            autoIncrement++;
                                         }
-                                        catch (Exception) { }
+                                    }
+                                    catch (Exception) { }
                                 }
                             }
                             catch (Exception) { }
@@ -232,3 +259,5 @@ namespace Bricks
         }
     }
 }
+          
+
